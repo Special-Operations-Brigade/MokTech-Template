@@ -21,6 +21,9 @@ jobs:
       with:
         name: build-output
         path: .hemttout/*
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: 'error'
   check_paths:
     needs: build
     runs-on: ubuntu-latest
