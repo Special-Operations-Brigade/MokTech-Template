@@ -23,4 +23,5 @@ releases/*
 hemtt.exe
 *.png
 .hemttout/
+.hemtt/missions/~*
 *.log
