@@ -264,6 +264,8 @@ def grab_built_pbos(dir):
 
 def get_texture_paths_from_config(config):
     RE_HS = re.compile(b"hiddenSelectionsTextures\x00", re.IGNORECASE)
+    RE_PC = re.compile(b"picture\x00", re.IGNORECASE)
+    RE_IC = re.compile(b"icon\x00", re.IGNORECASE)
     config = config.data
     paths = []
 
@@ -272,7 +274,24 @@ def get_texture_paths_from_config(config):
         stream.seek(match.span()[1])
         count_elements = rap_read_compressed_uint(stream)
 
-        paths.extend(rap_read_paths(stream, count_elements))
+        paths = rap_read_paths(stream, count_elements)
+        print_trace("hiddenSelectionsTextures: {}".format(paths))
+
+        paths.extend(paths)
+
+    for match in RE_PC.finditer(config):
+        stream.seek(match.span()[1])
+        path = rap_read_asciiz(stream)
+        print_trace("picture: {}".format(path))
+
+        paths.append(path)
+
+    for match in RE_IC.finditer(config):
+        stream.seek(match.span()[1])
+        path = rap_read_asciiz(stream)
+        print_trace("icon: {}".format(path))
+
+        paths.append(path)
 
     return paths
 
@@ -288,7 +307,7 @@ def check_pbo_paths(pbo):
     data_files = []
     for file in pbo:
         filename = "\\" + pboprefix + "\\" + file.filename.lower()
-        if ("data" in filename and ".paa" in filename):
+        if (".paa" in filename):
             print_trace("found data file {}".format(filename))
             data_files.append(filename)
 
@@ -309,8 +328,10 @@ def check_pbo_paths(pbo):
 
     # iterate through texture_paths from config and see if they are a) local to current addon and b) if they exist in data_files
     errors = []
+    modroot = pboprefix.split('\\')[0]+ "\\" + pboprefix.split('\\')[1] + "\\"
+    print_trace("modroot is {}".format(modroot))
     for path in texture_paths:
-        if (pboprefix in path):
+        if (modroot in path):
             print_trace("{} is local path".format(path))
             if (path in data_files):
                 print_trace("{} exists in data_files".format(path))
