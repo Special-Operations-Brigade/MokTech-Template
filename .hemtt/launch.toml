@@ -1,0 +1,26 @@
+[default]
+workshop = [
+    "450814997",  # CBA_A3
+    "463939057",  # ACE
+    "3499977893", # Advanced Dev Tools
+    "1779063631", # Zeus Enhanced
+    "2162749089", # Legion Studios: Core - Stable
+    "2320596778", # Legion Studios - Star Wars Battlefields
+    "1940589429", # Just Like the Simulations
+    "2917437034", # JLTS Extended Arsenal v0.2
+    "2058554822", # 3AS (Beta)
+    "2215872933", # 3AS Terrains (Beta)
+    "894678801",  # Task Force Arrowhead Radio
+    "1224892496", # Gruppe Adler Trenches
+    "2853193856", # MoKTech Industries - Core
+    "2954535667", # WarMantle Armory
+]
+parameters = []
+
+
+[mokka]
+extends = "default"
+parameters = [
+    "-noPause",
+    "-window",
+]
