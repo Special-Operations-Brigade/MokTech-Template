@@ -281,14 +281,14 @@ def get_texture_paths_from_config(config):
 
     for match in RE_PC.finditer(config):
         stream.seek(match.span()[1])
-        path = rap_read_asciiz(stream)
+        path = rap_read_asciiz(stream).lower()
         print_trace("picture: {}".format(path))
 
         paths.append(path)
 
     for match in RE_IC.finditer(config):
         stream.seek(match.span()[1])
-        path = rap_read_asciiz(stream)
+        path = rap_read_asciiz(stream).lower()
         print_trace("icon: {}".format(path))
 
         paths.append(path)
@@ -306,6 +306,7 @@ def check_pbo_paths(pbo):
     config_bin = None
     data_files = []
     for file in pbo:
+        print_trace("checking file {}".format(file.filename))
         filename = "\\" + pboprefix + "\\" + file.filename.lower()
         if (".paa" in filename):
             print_trace("found data file {}".format(filename))
