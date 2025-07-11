@@ -295,9 +295,7 @@ def get_texture_paths_from_config(config):
 
     return paths
 
-
-def check_pbo_paths(pbo):
-    # checks paths in the pbo
+def read_pbo_data_files(pbo):
     # grab pboprefix to find root path
     pboprefix = pbo.pbo_header.header_extension.strings[1].lower()
     print_trace("found pboprefix as {}".format(pboprefix))
@@ -318,17 +316,23 @@ def check_pbo_paths(pbo):
 
     if (config_bin is None):
         print_error("PBO does not contain a config.bin!")
-        return False
 
     if (len(data_files) == 0):
         print_warning("PBO does not contain data files")
+    
+    return (data_files, config_bin)
 
+def check_pbo_paths(pbo,config_bin,data_files):
+    # checks paths in the pbo
+    if config_bin is None:
+        return False
     # read the config.bin for all paths in hiddenSelectionsTextures[]
     texture_paths = get_texture_paths_from_config(config_bin)
     print_trace("found paths in config: {}".format(texture_paths))
 
     # iterate through texture_paths from config and see if they are a) local to current addon and b) if they exist in data_files
     errors = []
+    pboprefix = pbo.pbo_header.header_extension.strings[1].lower()
     modroot = pboprefix.split('\\')[0]+ "\\" + pboprefix.split('\\')[1] + "\\"
     print_trace("modroot is {}".format(modroot))
     for path in texture_paths:
@@ -378,6 +382,15 @@ def main(argv):
 
     # actually run the checks
     errors = []
+    data_files = []
+    config_bins = {}
+    for (file,pbo) in pbos:
+        # always read data_files from all pbos, as we need them to check the paths
+        print_trace("reading data files from pbo {}".format(file))
+        pbo_files = read_pbo_data_files(pbo)
+        data_files += pbo_files[0]
+        config_bins[file] = pbo_files[1]
+
     for (file,pbo) in pbos:
         skip = False
         if (not only_list is None):
@@ -390,7 +403,7 @@ def main(argv):
             continue
 
         print_blue("Checking paths in {}...".format(file))
-        success = check_pbo_paths(pbo)
+        success = check_pbo_paths(pbo,config_bins[file],data_files)
         if (success):
             print_blue("Paths in {} are valid!".format(file))
         else:
@@ -402,7 +415,7 @@ def main(argv):
         print_green("Validation of all addons' paths succeeded!")
         sys.exit(0)
     else:
-        print_error("Validation of one or more addons' paths failed!")
+        print_error("Validation of one or more addons' paths failed: {}".format(errors))
         sys.exit(1)
 
 
