@@ -260,17 +260,16 @@ def read_pbo_config_bin(pbo):
     print_trace("found pboprefix as {}, searchprefix as {}".format(pboprefix,searchprefix))
 
     # grab all files within the data directory and the config.bin
-    config_bin = None
+    config_bin = []
     for file in pbo:
         print_trace("checking file {}".format(file.filename))
         filename = "\\" + pboprefix + "\\" + file.filename.lower()
 
         if "config.bin" in filename:
-            config_bin = ConfigBin(rap.RAP_Reader.read_raw(io.BufferedReader(io.BytesIO(file.data))), searchprefix)
+            config_bin.append(ConfigBin(rap.RAP_Reader.read_raw(io.BufferedReader(io.BytesIO(file.data))), searchprefix))
             print_trace("found config.bin: {}".format(config_bin))
-            break
 
-    if (config_bin is None):
+    if (len(config_bin) == 0):
         print_error("PBO does not contain a config.bin!")
     
     return config_bin
@@ -334,13 +333,17 @@ def check_pbo_class_refs(pbo,config_bin,classes):
     if config_bin is None:
         return False
     # read the config.bin for all paths in hiddenSelectionsTextures[]
-    class_refs = get_class_refs_from_config(config_bin)
+    class_refs = []
+    for cfg in config_bin:
+        class_refs.extend(get_class_refs_from_config(cfg))
     print_trace("found class refs in config: {}".format(class_refs))
 
     # iterate through class_refs from config and see if they are a) local to current addon and b) if they exist in classes
     errors = []
+    pboprefix = pbo.pbo_header.header_extension.strings[1].lower()
+    searchprefix = pboprefix.split('\\')[1]
     for cls in class_refs:
-        if (config_bin.prefix in cls.classname):
+        if (searchprefix in cls.classname):
             print_trace("{} is local class".format(cls.classname))
             if (cls.classname in classes):
                 print_trace("{} exists in classes".format(cls.classname))
@@ -397,7 +400,8 @@ def main(argv):
     for (file,pbo) in pbos:
         print_trace("reading data files from pbo {}".format(file))
         config_bins[file] = read_pbo_config_bin(pbo)
-        classes.extend(get_classes_from_config(config_bins[file]))
+        for config in config_bins[file]:
+            classes.extend(get_classes_from_config(config))
 
     for (file,pbo) in pbos:
         skip = False

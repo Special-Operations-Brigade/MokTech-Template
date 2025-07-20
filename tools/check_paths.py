@@ -301,7 +301,7 @@ def read_pbo_data_files(pbo):
     print_trace("found pboprefix as {}".format(pboprefix))
 
     # grab all files within the data directory and the config.bin
-    config_bin = None
+    config_bin = []
     data_files = []
     for file in pbo:
         filename = "\\" + pboprefix + "\\" + file.filename.lower()
@@ -311,23 +311,25 @@ def read_pbo_data_files(pbo):
 
         if "config.bin" in filename:
             print_trace("found config.bin")
-            config_bin = ConfigBin(rap.RAP_Reader.read_raw(io.BufferedReader(io.BytesIO(file.data))), modroot)
+            config_bin.append(ConfigBin(rap.RAP_Reader.read_raw(io.BufferedReader(io.BytesIO(file.data))), modroot))
 
-    if (config_bin is None):
+    if (config_bin is []):
         print_error("PBO does not contain a config.bin!")
-        return ([], None)
+        return ([], [])
 
     if (len(data_files) == 0):
         print_warning("PBO does not contain data files")
 
-    return (data_files, ConfigBin(config_bin.data, modroot))
+    return (data_files, config_bin)
 
 def check_pbo_paths(pbo,config_bin,data_files):
     # checks paths in the pbo
-    if config_bin is None:
+    if config_bin is []:
         return False
     # read the config.bin for all paths in config
-    texture_paths = get_paths_from_config(config_bin)
+    texture_paths = []
+    for cfg in config_bin:
+        texture_paths.extend(get_paths_from_config(cfg))
     #print_trace("found paths in config: {}".format(texture_paths))
 
     # iterate through texture_paths from config and see if they are a) local to current addon and b) if they exist in data_files
