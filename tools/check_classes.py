@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-# File: check_paths.py
+# File: check_classes.py
 # Author: Mokka
 #
-# Description: Checks local file paths referenced in hiddenSelectionsTexture[]
+# Description: Checks addon classes in built pbos
 #
-# Usage: python ./tools/check_paths.py
+# Usage: python ./tools/check_classes.py
 #
 ###############################################################################
 
 # The MIT License (MIT)
 
-# Copyright (c) 2024-2024 Mokka
+# Copyright (c) 2025-2025 Mokka
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -32,7 +32,7 @@
 
 ###############################################################################
 
-__version__ = "0.2"
+__version__ = "0.1"
 
 import sys
 
@@ -46,8 +46,8 @@ import argparse
 import io
 import re
 import struct
-from utils import data_rap as rap
 from utils import binary_handler
+from utils import data_rap as rap
 
 # Set Globals
 root_dir = ""
@@ -201,20 +201,17 @@ def rap_read_paths(stream, count):
     return paths
 ############################################################
 
-class PathRef:
-    def __init__(self, path, parent, entry_name):
-        self.path = path.lower()
-        self.parent = parent.lower()
-        self.entry_name = entry_name.lower()
-
-    def __str__(self):
-        return "{} (class {} >> '{}')".format(self.path, self.parent, self.entry_name)
+class ClassRef:
+    def __init__(self, classname, path, source):
+        self.classname = classname
+        self.path = path
+        self.source = source
 
     def __repr__(self):
-        return self.__str__()
+        return "ClassRef(classname={}, path={}, source={})".format(self.classname, self.path, self.source)
 
-    def __iter__(self):
-        return iter((self.path, self.parent, self.entry_name))
+    def __str__(self):
+        return "{} (class {} >> '{}')".format(self.classname, self.path, self.source)
 
 class ConfigBin:
     def __init__(self, data, prefix):
@@ -223,6 +220,7 @@ class ConfigBin:
 
     def __repr__(self):
         return "ConfigBin(data={}, prefix={})".format(self.data, self.prefix)
+
 
 def find_build_dir(pwd):
     # check if we find the .hemttout folder here, otherwise try one directory further up
@@ -238,7 +236,6 @@ def find_build_dir(pwd):
             raise Exception("NoBuildDir","HEMTT build output directory could not be found!")
     else:
         return find_build_dir(os.path.join(pwd,'..'))
-
 
 def grab_built_pbos(dir):
     # return all built pbos as PBOFile objects
@@ -256,107 +253,115 @@ def grab_built_pbos(dir):
 
     return pbos
 
-def is_local_path(path,prefix):
-    # check if the path is a valid local path
-    return (path.find(prefix) == 0)
+def read_pbo_config_bin(pbo):
+    # grab pboprefix to find root path
+    pboprefix = pbo.pbo_header.header_extension.strings[1].lower()
+    searchprefix = pboprefix.split('\\')[1]
+    print_trace("found pboprefix as {}, searchprefix as {}".format(pboprefix,searchprefix))
 
-def get_paths_from_config(config):
+    # grab all files within the data directory and the config.bin
+    config_bin = None
+    for file in pbo:
+        print_trace("checking file {}".format(file.filename))
+        filename = "\\" + pboprefix + "\\" + file.filename.lower()
+
+        if "config.bin" in filename:
+            config_bin = ConfigBin(rap.RAP_Reader.read_raw(io.BufferedReader(io.BytesIO(file.data))), searchprefix)
+            print_trace("found config.bin: {}".format(config_bin))
+            break
+
+    if (config_bin is None):
+        print_error("PBO does not contain a config.bin!")
+    
+    return config_bin
+
+def get_classes_from_config(config):
     cfg_root = config.data.body
-    paths = recurse_paths(cfg_root, config.prefix)
-    #print_trace("found paths: {}".format(paths))
-    return list(set(paths))  # remove duplicates
+    classes = recurse_classes_from_config(cfg_root,config.prefix)
+    print_trace("found classes: {}".format(classes))
+    return list(set(classes))  # return unique classes
 
-def recurse_paths(cfg, searchprefix, parent="root"):
+def recurse_classes_from_config(cfg,searchprefix,parent="root"):
     classes = []
     for entry in cfg.entries:
         if entry.type == rap.RAP.EntryType.CLASS:
-            #print_trace("found class: {}".format(entry.name))
-            classes.extend(recurse_paths(entry.body,searchprefix,entry.name))
-        elif entry.type == rap.RAP.EntryType.ARRAY:
-            for subentry in entry.body.elements:
-                classes.extend(parse_path_from_entry(subentry, searchprefix, parent, entry.name))
-        elif entry.type == rap.RAP.EntryType.SCALAR:
-            classes.extend(parse_path_from_entry(entry, searchprefix, parent))
+            if (entry.name.find(searchprefix) == 0):
+                classes.append(entry.name.lower())
+            classes.extend(recurse_classes_from_config(entry.body,searchprefix, entry.name))
 
     return classes
 
-def parse_path_from_entry(entry, searchprefix, parent, entry_name=None):
+def get_class_refs_from_config(config):
+    cfg_root = config.data.body
+    class_refs = recurse_class_refs_from_config(cfg_root,config.prefix)
+    #print_trace("found class refs: {}".format(class_refs))
+    return list(set(class_refs))  # return unique class refs
+
+def recurse_class_refs_from_config(cfg,searchprefix,parent="root"):
+    classes = []
+    if (parent == "CfgPatches" and skip_cfgpatches):
+        return classes  # skip CfgPatches if requested
+    for entry in cfg.entries:
+        if entry.type == rap.RAP.EntryType.CLASS:
+            #print_trace("found class: {}".format(entry.name))
+            classes.extend(recurse_class_refs_from_config(entry.body,searchprefix,entry.name))
+        elif entry.type == rap.RAP.EntryType.ARRAY:
+            for subentry in entry.body.elements:
+                classes.extend(parse_class_ref_from_entry(subentry, searchprefix, parent, entry.name))
+        elif entry.type == rap.RAP.EntryType.SCALAR:
+            classes.extend(parse_class_ref_from_entry(entry, searchprefix, parent))
+
+    return classes
+
+def parse_class_ref_from_entry(entry, searchprefix, parent, entry_name=None):
     if entry_name is None:
         entry_name = entry.name
-
     # parse a class ref from an entry name
     if (entry.subtype != rap.RAP.EntrySubType.STRING):
         return []
 
-    if (is_local_path(entry.value, searchprefix)):
-        print_trace("found path: {} in {} at {}".format(entry.value, entry_name, parent))
-        return [PathRef(entry.value.lower(), parent.lower(), entry_name.lower())]
+    if (entry.value.find(searchprefix) == 0):
+        # handle functions
+        if ("_fnc_" in entry.value):
+            return []
+        #print_trace("found class ref: {} with {} at {}".format(entry_name, entry.value, parent))
+        return [ClassRef(entry.value.lower(), parent.lower(), entry_name.lower())]
     else:
         return []
 
-def read_pbo_data_files(pbo):
-    # grab pboprefix to find root path
-    pboprefix = pbo.pbo_header.header_extension.strings[1].lower()
-    modroot = "\\" + pboprefix.split('\\')[0]+ "\\" + pboprefix.split('\\')[1] + "\\"
-    print_trace("found pboprefix as {}".format(pboprefix))
-
-    # grab all files within the data directory and the config.bin
-    config_bin = None
-    data_files = []
-    for file in pbo:
-        filename = "\\" + pboprefix + "\\" + file.filename.lower()
-        if (not ".hpp" in filename):
-            print_trace("found data file {}".format(filename))
-            data_files.append(filename)
-
-        if "config.bin" in filename:
-            print_trace("found config.bin")
-            config_bin = ConfigBin(rap.RAP_Reader.read_raw(io.BufferedReader(io.BytesIO(file.data))), modroot)
-
-    if (config_bin is None):
-        print_error("PBO does not contain a config.bin!")
-        return ([], None)
-
-    if (len(data_files) == 0):
-        print_warning("PBO does not contain data files")
-
-    return (data_files, ConfigBin(config_bin.data, modroot))
-
-def check_pbo_paths(pbo,config_bin,data_files):
+def check_pbo_class_refs(pbo,config_bin,classes):
     # checks paths in the pbo
     if config_bin is None:
         return False
-    # read the config.bin for all paths in config
-    texture_paths = get_paths_from_config(config_bin)
-    #print_trace("found paths in config: {}".format(texture_paths))
+    # read the config.bin for all paths in hiddenSelectionsTextures[]
+    class_refs = get_class_refs_from_config(config_bin)
+    print_trace("found class refs in config: {}".format(class_refs))
 
-    # iterate through texture_paths from config and see if they are a) local to current addon and b) if they exist in data_files
+    # iterate through class_refs from config and see if they are a) local to current addon and b) if they exist in classes
     errors = []
-    pboprefix = pbo.pbo_header.header_extension.strings[1].lower()
-    modroot = "\\" + pboprefix.split('\\')[0]+ "\\" + pboprefix.split('\\')[1] + "\\"
-    print_trace("modroot is {}".format(modroot))
-    for path in texture_paths:
-        if (modroot in path.path):
-            print_trace("{} is local path".format(path.path))
-            if (path.path in data_files):
-                print_trace("{} exists in data_files".format(path.path))
+    for cls in class_refs:
+        if (config_bin.prefix in cls.classname):
+            print_trace("{} is local class".format(cls.classname))
+            if (cls.classname in classes):
+                print_trace("{} exists in classes".format(cls.classname))
             else:
-                print_warning("File {} could not be found!".format(path))
-                errors.append(path)
+                print_warning("Class {} could not be found!".format(cls))
+                errors.append(cls.classname)
         else:
-            print_trace("{} is not local path, skipping".format(path))
+            print_trace("{} is not local class, skipping".format(cls.classname))
             continue
 
     return (len(errors) == 0)
 
 
 def main(argv):
-    print_blue("## check_paths.py, version {} ##\n".format(__version__))
+    print_blue("## check_classes.py, version {} ##\n".format(__version__))
 
     # parse args
-    parser = argparse.ArgumentParser(description="This script checks all local paths referenced in hiddenSelectionsTextures[] entries in the output of this project's HEMTT build.")
+    parser = argparse.ArgumentParser(description="This script checks all local classes in the output of this project's HEMTT build.")
     parser.add_argument('directory',nargs='?',help='directory to operate on',default='.')
     parser.add_argument('-v', '--verbose',help='enables tracel-level logging',action='store_true')
+    parser.add_argument('--enable-cfgpatches',help='enables checking units/weapons array in CfgPatches',action='store_true')
     parser.add_argument('-o','--only',help='only run the path checks on the following addon',nargs='+')
     args = parser.parse_args()
     global enable_trace
@@ -370,6 +375,10 @@ def main(argv):
     only_list = args.only
     print_trace("setting only_list to {}".format(only_list))
 
+    global skip_cfgpatches
+    skip_cfgpatches = not args.enable_cfgpatches
+    print_trace("setting skip_cfgpatches to {}".format(skip_cfgpatches))
+
     # preliminary stuffs
     global build_dir
     try:
@@ -382,16 +391,13 @@ def main(argv):
 
     # actually run the checks
     errors = []
-    data_files = []
+    classes = []
     config_bins = {}
+    # first pass, read all classes from all pbos to match cross-refs
     for (file,pbo) in pbos:
-        # first pass, read all data files from all pbos to match cross-refs
         print_trace("reading data files from pbo {}".format(file))
-        pbo_files = read_pbo_data_files(pbo)
-        data_files += pbo_files[0]
-        config_bins[file] = pbo_files[1]
-
-    data_files = list(set(data_files))  # remove duplicates
+        config_bins[file] = read_pbo_config_bin(pbo)
+        classes.extend(get_classes_from_config(config_bins[file]))
 
     for (file,pbo) in pbos:
         skip = False
@@ -404,20 +410,20 @@ def main(argv):
             print_trace("{} not in only_list, skipping".format(file))
             continue
 
-        print_blue("Checking paths in {}...".format(file))
-        success = check_pbo_paths(pbo,config_bins[file],data_files)
+        print_blue("Checking classes in {}...".format(file))
+        success = check_pbo_class_refs(pbo,config_bins[file],classes)
         if (success):
-            print_blue("Paths in {} are valid!".format(file))
+            print_blue("Classes in {} are valid!".format(file))
         else:
-            print_error("Paths in {} contain errors!".format(file))
+            print_error("Classes in {} contain errors!".format(file))
             errors.append(file)
         print('')
 
     if (len(errors) == 0):
-        print_green("Validation of all addons' paths succeeded!")
+        print_green("Validation of all addons' classes succeeded!")
         sys.exit(0)
     else:
-        print_error("Validation of one or more addons' paths failed: {}".format(errors))
+        print_error("Validation of one or more addons' classes failed: {}".format(errors))
         sys.exit(1)
 
 
