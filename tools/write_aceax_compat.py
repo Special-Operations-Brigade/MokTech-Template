@@ -220,7 +220,12 @@ class ModelRef:
             if (idx < (len(keys) - 1)):
                 options = options + ", "
 
-            data_str = data_str + "\n\t\t\tclass {} {{".format(k)
+            data_str = data_str + "\n\t\t\tclass {} {{\n\t\t\t\tchangeingame = 0;\n\t\t\t\tvalues[] = {{".format(k)
+            for idy, o in enumerate(self.data[k]):
+                data_str = data_str + '"{}"'.format(o)
+                if (idy < (len(self.data[k]) - 1)):
+                    data_str = data_str + ", "
+            data_str = data_str + "};\n"
             for o in self.data[k]:
                 data_str = data_str + '\n\t\t\t\tclass {0} {{ label = "{1}"; }};'.format(o.replace(" ","_"),o)
             data_str = data_str + "\n\t\t\t};\n"
