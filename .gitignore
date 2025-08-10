@@ -23,6 +23,7 @@ releases/*
 hemtt.exe
 *.png
 .hemttout/
+.hemtt/missions/~*
 *.log
 
 __pycache__/

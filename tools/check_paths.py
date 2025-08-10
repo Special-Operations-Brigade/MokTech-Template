@@ -202,19 +202,20 @@ def rap_read_paths(stream, count):
 ############################################################
 
 class PathRef:
-    def __init__(self, path, parent, entry_name):
+    def __init__(self, path, parents, entry_name):
         self.path = path.lower()
-        self.parent = parent.lower()
+        self.parents = parents
         self.entry_name = entry_name.lower()
 
     def __str__(self):
-        return "{} (class {} >> '{}')".format(self.path, self.parent, self.entry_name)
+        f_path = " >> ".join(self.parents)
+        return "{} ({} >> '{}')".format(self.path, f_path, self.entry_name)
 
     def __repr__(self):
         return self.__str__()
 
     def __iter__(self):
-        return iter((self.path, self.parent, self.entry_name))
+        return iter((self.path, self.parents, self.entry_name))
 
 class ConfigBin:
     def __init__(self, data, prefix):
@@ -266,21 +267,23 @@ def get_paths_from_config(config):
     #print_trace("found paths: {}".format(paths))
     return list(set(paths))  # remove duplicates
 
-def recurse_paths(cfg, searchprefix, parent="root"):
+def recurse_paths(cfg, searchprefix, parents=["configFile"]):
     classes = []
     for entry in cfg.entries:
         if entry.type == rap.RAP.EntryType.CLASS:
             #print_trace("found class: {}".format(entry.name))
-            classes.extend(recurse_paths(entry.body,searchprefix,entry.name))
+            l_parents = parents[:]
+            l_parents.append("'{}'".format(entry.name))
+            classes.extend(recurse_paths(entry.body,searchprefix,l_parents))
         elif entry.type == rap.RAP.EntryType.ARRAY:
             for subentry in entry.body.elements:
-                classes.extend(parse_path_from_entry(subentry, searchprefix, parent, entry.name))
+                classes.extend(parse_path_from_entry(subentry, searchprefix, parents, entry.name))
         elif entry.type == rap.RAP.EntryType.SCALAR:
-            classes.extend(parse_path_from_entry(entry, searchprefix, parent))
+            classes.extend(parse_path_from_entry(entry, searchprefix, parents))
 
     return classes
 
-def parse_path_from_entry(entry, searchprefix, parent, entry_name=None):
+def parse_path_from_entry(entry, searchprefix, parents, entry_name=None):
     if entry_name is None:
         entry_name = entry.name
 
@@ -289,8 +292,14 @@ def parse_path_from_entry(entry, searchprefix, parent, entry_name=None):
         return []
 
     if (is_local_path(entry.value, searchprefix)):
-        print_trace("found path: {} in {} at {}".format(entry.value, entry_name, parent))
-        return [PathRef(entry.value.lower(), parent.lower(), entry_name.lower())]
+        if (skip_no_extension and not '.' in entry.value):
+            print_trace("skipping path without file extension: {}".format(entry.value))
+            return []
+        if (skip_editorpreview and 'editorpreview' in entry.value):
+            print_trace("skipping path with editorpreview: {}".format(entry.value))
+            return []
+        print_trace("found path: {} in {} at {}".format(entry.value, entry_name, parents))
+        return [PathRef(entry.value.lower(), parents, entry_name.lower())]
     else:
         return []
 
@@ -359,10 +368,18 @@ def main(argv):
     parser = argparse.ArgumentParser(description="This script checks all local paths referenced in hiddenSelectionsTextures[] entries in the output of this project's HEMTT build.")
     parser.add_argument('directory',nargs='?',help='directory to operate on',default='.')
     parser.add_argument('-v', '--verbose',help='enables tracel-level logging',action='store_true')
+    parser.add_argument('--skip-no-extension',help='skips file paths in config entries that do not have a file extension',action='store_true')
+    parser.add_argument('--skip-editorpreview',help='skips file paths in config entries that refer to editorpreviews',action='store_true')
     parser.add_argument('-o','--only',help='only run the path checks on the following addon',nargs='+')
     args = parser.parse_args()
     global enable_trace
     enable_trace = args.verbose
+
+    global skip_no_extension
+    skip_no_extension = args.skip_no_extension
+
+    global skip_editorpreview
+    skip_editorpreview = args.skip_editorpreview
 
     global root_dir
     root_dir = os.path.abspath(args.directory)

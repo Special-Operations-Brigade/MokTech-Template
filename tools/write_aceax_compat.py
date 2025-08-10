@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# File: check_classes.py
+# File: write_aceax_compat.py
 # Author: Mokka
 #
-# Description: Checks addon classes in built pbos
+# Description: Writes compat file for ACE Extended Arsenal
 #
-# Usage: python ./tools/check_classes.py
+# Usage: python ./tools/write_aceax_compat.py
 #
 ###############################################################################
 
@@ -54,7 +54,7 @@ root_dir = ""
 build_dir = ""
 only_list = []
 enable_trace = False
-property_blacklist = ['hardpoints']
+output_file = "XtdGearModels.hpp"
 
 ############################################################
 # Utility functions
@@ -187,41 +187,60 @@ def print_blue(msg):
     color("reset")
 ############################################################
 
-############################################################
-# rap-related functions for binary file reading
-# many thanks to MrClock (https://github.com/MrClock8163/)
-def rap_read_paths(stream, count):
-    paths = []
-    for i in range(count):
-        if binary_handler.read_byte(stream) != 0:
-            print_warning("Non-ASCIIZ value encountered in array")
-            break
-
-        paths.append(binary_handler.read_asciiz(stream).lower())
-
-    return paths
-############################################################
-
 class ClassRef:
-    def __init__(self, classname, path, source):
+    def __init__(self, classname, data):
         self.classname = classname
-        self.path = path
-        self.source = source
+        self.data = data
 
     def __repr__(self):
-        return "ClassRef(classname={}, path={}, source={})".format(self.classname, self.path, self.source)
+        return "ClassRef(classname={}, data={})".format(self.classname, self.data)
 
     def __str__(self):
-        f_path = " >> ".join(self.path)
-        return "{} ({} >> '{}')".format(self.classname, f_path, self.source)
+        return "class {}: {}".format(self.classname, self.data)
 
-class ConfigBin:
-    def __init__(self, data, prefix):
+class ModelRef:
+    def __init__(self,name,data):
+        self.name = name
+
+        for d in data:
+            data[d] = list(set(data[d]))
+            data[d].sort()
+
         self.data = data
-        self.prefix = prefix
 
     def __repr__(self):
-        return "ConfigBin(data={}, prefix={})".format(self.data, self.prefix)
+        return "ModelRef(name={}, data={})".format(self.name,self.data)
+
+    def __str__(self):
+        options = ""
+        data_str = ""
+        keys = self.data.keys()
+        for idx, k in enumerate(keys):
+            options = options + '"{}"'.format(k)
+            if (idx < (len(keys) - 1)):
+                options = options + ", "
+
+            data_str = data_str + "\n\t\t\tclass {} {{".format(k)
+            for o in self.data[k]:
+                data_str = data_str + '\n\t\t\t\tclass {0} {{ label = "{1}"; }};'.format(o.replace(" ","_"),o)
+            data_str = data_str + "\n\t\t\t};\n"
+
+
+        return '\t\tclass {} {{\n\t\t\tlabel = "";\n\t\t\tauthor = "MokTech Industries";\n\t\t\toptions[] = {{{}}};\n{}\t\t}};'.format(self.name,options,data_str)
+
+class ConfigBin:
+    def __init__(self, data, prefix, addon, path):
+        self.data = data
+        self.prefix = prefix
+        self.addon = addon
+
+        if os.name != 'nt':
+            self.path = path.replace('\\','/')
+        else:
+            self.path = path
+
+    def __repr__(self):
+        return "ConfigBin(data={}, prefix={}, addon={}, path={})".format(self.data, self.prefix, self.addon, self.path)
 
 
 def find_build_dir(pwd):
@@ -255,6 +274,12 @@ def grab_built_pbos(dir):
 
     return pbos
 
+def get_config_prefix(cfg, searchprefix):
+    cfg_patches = next(entry for entry in cfg.body.entries if entry.type == rap.RAP.EntryType.CLASS and (entry.name.lower() == "cfgpatches"))
+    prefix = cfg_patches.body.entries[0].name.lower() if len(cfg_patches.body.entries) > 0 else None
+    print_trace("found config prefix: {}".format(prefix))
+    return prefix
+
 def read_pbo_config_bin(pbo):
     # grab pboprefix to find root path
     pboprefix = pbo.pbo_header.header_extension.strings[1].lower()
@@ -264,12 +289,19 @@ def read_pbo_config_bin(pbo):
     # grab all files within the data directory and the config.bin
     config_bin = []
     for file in pbo:
-        print_trace("checking file {}".format(file.filename))
+        #print_trace("checking file {}".format(file.filename))
         filename = "\\" + pboprefix + "\\" + file.filename.lower()
 
         if "config.bin" in filename:
-            config_bin.append(ConfigBin(rap.RAP_Reader.read_raw(io.BufferedReader(io.BytesIO(file.data))), searchprefix))
-            print_trace("found config.bin: {}".format(config_bin))
+            cfg = rap.RAP_Reader.read_raw(io.BufferedReader(io.BytesIO(file.data)))
+            prefix = get_config_prefix(cfg, searchprefix)
+            addon = file.filename.split('\\')[0].lower()
+            if "config.bin" in addon:
+                addon = addon.replace("config.bin", "")
+            path = os.path.join(root_dir, '\\'.join(pboprefix.split('\\')[-2:]), addon)
+            c_bin = ConfigBin(cfg, searchprefix, prefix, path)
+            config_bin.append(c_bin)
+            print_trace("found config.bin: {}".format(c_bin))
 
     if (len(config_bin) == 0):
         print_error("PBO does not contain a config.bin!")
@@ -278,100 +310,135 @@ def read_pbo_config_bin(pbo):
 
 def get_classes_from_config(config):
     cfg_root = config.data.body
-    classes = recurse_classes_from_config(cfg_root,config.prefix)
-    print_trace("found classes: {}".format(classes))
-    return list(set(classes))  # return unique classes
+    cfg_glasses = next((entry for entry in cfg_root.entries if entry.type == rap.RAP.EntryType.CLASS and (entry.name.lower() == "cfgglasses")), None)
+    cfg_weapons = next((entry for entry in cfg_root.entries if entry.type == rap.RAP.EntryType.CLASS and (entry.name.lower() == "cfgweapons")), None)
+    cfg_vehicles = next((entry for entry in cfg_root.entries if entry.type == rap.RAP.EntryType.CLASS and (entry.name.lower() == "cfgvehicles")), None)
 
-def recurse_classes_from_config(cfg,searchprefix,parents="root"):
-    classes = []
-    for entry in cfg.entries:
-        if entry.type == rap.RAP.EntryType.CLASS:
-            if (entry.name.find(searchprefix) == 0):
-                classes.append(entry.name.lower())
-            classes.extend(recurse_classes_from_config(entry.body,searchprefix, entry.name))
-
-    return classes
-
-def get_class_refs_from_config(config):
-    cfg_root = config.data.body
-    class_refs = recurse_class_refs_from_config(cfg_root,config.prefix)
-    #print_trace("found class refs: {}".format(class_refs))
-    return list(set(class_refs))  # return unique class refs
-
-def recurse_class_refs_from_config(cfg,searchprefix,parents=["configFile"]):
-    classes = []
-    #print_trace("recurse_class_refs_from_config: cfg: {}, searchprefix: {}, parents: {}".format(cfg,searchprefix,parents))
-    if (("'CfgPatches'" in parents) and skip_cfgpatches):
-        return classes  # skip CfgPatches if requested
-    for entry in cfg.entries:
-        if entry.type == rap.RAP.EntryType.CLASS:
-            print_trace("found class: {}".format(entry.name))
-            l_parents = parents[:]
-            l_parents.append("'{}'".format(entry.name))
-            classes.extend(recurse_class_refs_from_config(entry.body,searchprefix,l_parents))
-        elif entry.type == rap.RAP.EntryType.ARRAY:
-            for subentry in entry.body.elements:
-                classes.extend(parse_class_ref_from_entry(subentry, searchprefix, parents, entry.name))
-        elif entry.type == rap.RAP.EntryType.SCALAR:
-            classes.extend(parse_class_ref_from_entry(entry, searchprefix, parents))
-
-    return classes
-
-def parse_class_ref_from_entry(entry, searchprefix, parents, entry_name=None):
-    if entry_name is None:
-        entry_name = entry.name
-    # parse a class ref from an entry name
-    if (entry.subtype != rap.RAP.EntrySubType.STRING):
-        return []
-
-    if (entry.value.find(searchprefix) == 0):
-        # handle functions
-        if ("_fnc_" in entry.value):
-            return []
-        print_trace("found class ref: {} with {} at {}".format(entry_name, entry.value, parents))
-        if (entry_name.lower() in property_blacklist):
-            return []
-        return [ClassRef(entry.value.lower(), parents, entry_name.lower())]
+    if not cfg_glasses is None:
+        print_trace("----\nrecursing CfgGlasses\n----")
+        classes_facewear = recurse_classes_from_config(cfg_glasses.body,config.prefix)
     else:
+        classes_facewear = []
+
+    if not cfg_weapons is None:
+        print_trace("----\nrecursing CfgWeapons\n----")
+        classes_weapons = recurse_classes_from_config(cfg_weapons.body,config.prefix)
+    else:
+        classes_weapons = []
+
+    if not cfg_vehicles is None:
+        print_trace("----\nrecursing CfgVehicles\n----")
+        classes_vehicles = recurse_classes_from_config(cfg_vehicles.body,config.prefix)
+    else:
+        classes_vehicles = []
+
+    print_trace("found facewear classes {}".format(classes_facewear))
+    print_trace("found weapon classes {}".format(classes_weapons))
+    print_trace("found vehicle classes {}".format(classes_vehicles))
+    return (classes_facewear, classes_weapons, classes_vehicles)
+
+def recurse_classes_from_config(cfg,searchprefix,parent="root",level=0):
+    print_trace("recurse level {}".format(level))
+    classes = []
+    if (level > 1):
+        return classes # don't traverse past the first level here
+    for entry in cfg.entries:
+        if entry.type == rap.RAP.EntryType.CLASS:
+            print_trace("checking {} with searchprefix {}".format(entry.name,searchprefix))
+            if (entry.name.find(searchprefix) == 0):
+                print_trace("{} in searchprefix".format(entry.name))
+                classes.extend(get_classref_from_entry(entry,searchprefix))
+            classes.extend(recurse_classes_from_config(entry.body,searchprefix, entry.name,level + 1))
+
+    return classes
+
+def get_classref_from_entry(entry,searchprefix):
+    # look for XtdGearInfo
+    xtdgearinfo = next((e for e in entry.body.entries if e.type == rap.RAP.EntryType.CLASS and (e.name.lower() == "xtdgearinfo")), None)
+    if (xtdgearinfo is None):
         return []
 
-def check_pbo_class_refs(pbo,config_bin,classes):
-    # checks paths in the pbo
-    if config_bin is None:
-        return False
-    # read the config.bin for all paths in hiddenSelectionsTextures[]
-    class_refs = []
-    for cfg in config_bin:
-        class_refs.extend(get_class_refs_from_config(cfg))
-    print_trace("found class refs in config: {}".format(class_refs))
+    if (len(xtdgearinfo.body.entries) == 0):
+        return []
 
-    # iterate through class_refs from config and see if they are a) local to current addon and b) if they exist in classes
-    errors = []
-    pboprefix = pbo.pbo_header.header_extension.strings[1].lower()
-    searchprefix = pboprefix.split('\\')[1]
-    for cls in class_refs:
-        if (searchprefix in cls.classname):
-            print_trace("{} is local class".format(cls.classname))
-            if (cls.classname in classes):
-                print_trace("{} exists in classes".format(cls.classname))
+    compat_data = {}
+    for e in xtdgearinfo.body.entries:
+        compat_data.update({e.name: e.value})
+
+    class_ref = ClassRef(entry.name, compat_data)
+    return [class_ref]
+
+def get_models_from_classes(classes):
+    models = {}
+    for c in classes:
+        model = ""
+        options = {}
+        for x in c.data:
+            if x == "model":
+                model = c.data[x]
             else:
-                print_warning("Class {} could not be found!".format(cls))
-                errors.append(cls.classname)
-        else:
-            print_trace("{} is not local class, skipping".format(cls.classname))
-            continue
+                options[x] = c.data[x]
+        if model != "":
+            print_trace("iterating options in model {}: {}".format(model,options))
+            all_options = models.get(model, {})
+            for o in options:
+                p = all_options.get(o, [])
+                p.append(options[o])
+                all_options[o] = p
+            models[model] = all_options
+    print_trace("found models {}".format(models))
 
-    return (len(errors) == 0)
+    out = []
+    for m in models:
+        out.append(ModelRef(m,models[m]))
 
+    return out
+
+def write_compat_to_file(classes_facewear, classes_weapons, classes_vehicles, path,addon):
+    if not os.path.exists(path):
+        print_warning("Directory does not exist: {}".format(path))
+        return False
+    xtdgearmodels = os.path.join(path, output_file)
+
+    try:
+        with open(xtdgearmodels, 'w', encoding='utf-8') as f:
+            f.write("// This file is automatically generated by write_aceax_compat.py\n")
+            f.write("// Do not edit this file manually!\n\n")
+            f.write("class XtdGearModels {\n")
+            if (len(classes_facewear) > 0):
+                models = get_models_from_classes(classes_facewear)
+                f.write("\tclass CfgGlasses {\n")
+                for m in models:
+                    f.write("{}\n".format(m))
+                f.write("\t};\n")
+            if (len(classes_weapons) > 0):
+                models = get_models_from_classes(classes_weapons)
+                f.write("\tclass CfgWeapons {\n")
+                for m in models:
+                    f.write("{}\n".format(m))
+                f.write("\t};\n")
+            if (len(classes_vehicles) > 0):
+                models = get_models_from_classes(classes_vehicles)
+                f.write("\tclass CfgVehicles {\n")
+                for m in models:
+                    f.write("{}\n".format(m))
+                f.write("\t};\n")
+            f.write("};\n")
+
+
+    except OSError as e:
+        print_error("An error occurred while writing to file {}: {}".format(xtdgearmodels, e))
+        return False
+
+    return True
 
 def main(argv):
-    print_blue("## check_classes.py, version {} ##\n".format(__version__))
+    print_blue("## write_aceax_compat.py, version {} ##\n".format(__version__))
 
     # parse args
     parser = argparse.ArgumentParser(description="This script checks all local classes in the output of this project's HEMTT build.")
     parser.add_argument('directory',nargs='?',help='directory to operate on',default='.')
     parser.add_argument('-v', '--verbose',help='enables tracel-level logging',action='store_true')
-    parser.add_argument('--enable-cfgpatches',help='enables checking units/weapons array in CfgPatches',action='store_true')
     parser.add_argument('-o','--only',help='only run the path checks on the following addon',nargs='+')
     args = parser.parse_args()
     global enable_trace
@@ -385,10 +452,6 @@ def main(argv):
     only_list = args.only
     print_trace("setting only_list to {}".format(only_list))
 
-    global skip_cfgpatches
-    skip_cfgpatches = not args.enable_cfgpatches
-    print_trace("setting skip_cfgpatches to {}".format(skip_cfgpatches))
-
     # preliminary stuffs
     global build_dir
     try:
@@ -399,17 +462,9 @@ def main(argv):
 
     pbos = grab_built_pbos(build_dir)
 
-    # actually run the checks
-    errors = []
     classes = []
+    errors = []
     config_bins = {}
-    # first pass, read all classes from all pbos to match cross-refs
-    for (file,pbo) in pbos:
-        print_trace("reading data files from pbo {}".format(file))
-        config_bins[file] = read_pbo_config_bin(pbo)
-        for config in config_bins[file]:
-            classes.extend(get_classes_from_config(config))
-
     for (file,pbo) in pbos:
         skip = False
         if (not only_list is None):
@@ -421,20 +476,31 @@ def main(argv):
             print_trace("{} not in only_list, skipping".format(file))
             continue
 
-        print_blue("Checking classes in {}...".format(file))
-        success = check_pbo_class_refs(pbo,config_bins[file],classes)
-        if (success):
-            print_blue("Classes in {} are valid!".format(file))
-        else:
-            print_error("Classes in {} contain errors!".format(file))
-            errors.append(file)
-        print('')
+        print_trace("reading data files from pbo {}".format(file))
+        config_bins[file] = read_pbo_config_bin(pbo)
+
+    for config_files in config_bins.values():
+        for config in config_files:
+            classes_facewear, classes_weapons, classes_vehicles = get_classes_from_config(config)
+            if (len(classes_facewear) == 0 and len(classes_weapons) == 0 and len(classes_vehicles) == 0):
+                print_blue("No vehicle/weapon/facewear classes found in config.bin for addon: {}".format(config.addon))
+                continue
+
+            result = write_compat_to_file(classes_facewear, classes_weapons, classes_vehicles, config.path, config.addon)
+
+            if (result):
+                print_blue("Wrote {} facewear classes, {} weapon classes and {} vehicle classes to file: {}".format(len(classes_facewear), len(classes_weapons), len(classes_vehicles), os.path.join(config.path,output_file)))
+            else:
+                print_error("Failed to write to file: {}".format(os.path.join(config.path,output_file)))
+                errors.append(config.addon)
+
+
 
     if (len(errors) == 0):
-        print_green("Validation of all addons' classes succeeded!")
+        print_green("{} files successfully written!".format(output_file))
         sys.exit(0)
     else:
-        print_error("Validation of one or more addons' classes failed: {}".format(errors))
+        print_error("Writing {} for one or more addons has failed: {}".format(output_file, errors))
         sys.exit(1)
 
 
